@@ -163,7 +163,7 @@
             .grid { grid-template-columns: repeat(auto-fill, minmax(105px, 1fr)); gap: 8px; }
             .card-title { font-size: 13px; }
             .card-body { padding: 6px 8px; }
-            .card-pos { font-size: 11px; display: none; }
+            .card-pos { font-size: 11px; }
             .card-status { margin-top: 4px; font-size: 11px; }
             .card { -webkit-tap-highlight-color: transparent; }
             .upload-area { padding: 28px 16px; }
@@ -215,7 +215,7 @@
             <label class="file-label" id="uploadBtnArea" style="display:none;font-size:18px;padding:16px 32px;margin-top:12px"><input type="file" id="pdfInputMobile" accept="application/pdf">📄 选择停车票 PDF</label>
             <div class="progress-log" id="progressLog">等待 PDF...首次识别约需几十秒，请耐心等待。</div>
         </div>
-        <div id="pages" class="pages"></div>
+        <div id="pages" class="grid"></div>
         <div id="empty" class="empty" style="display:none">没有符合条件的停车票</div>
     </main>
 
@@ -383,83 +383,84 @@
 
         // ===== 处理 PDF =====
         async function processPdf(file) {
-            const confirmReplace = tickets.length > 0 ? confirm('当前已有 ' + tickets.length + ' 张票的数据，处理新 PDF 会覆盖现有数据（使用记录会保留并尝试匹配新顺序）。是否继续？') : true;
-            if (!confirmReplace) return;
+            const hadData = tickets.length > 0;
+            const oldUsed = {};
+            if (hadData) tickets.forEach(t => { if (t.used) oldUsed[t.url] = true; });
+            if (hadData && !confirm('当前已有 ' + tickets.length + ' 张票的数据，处理新 PDF 会覆盖现有数据（已使用的记录会尽量按二维码匹配保留）。是否继续？')) return;
 
-            const oldUsed = { ...used };
-            tickets = [];
-            used = {};
-            pages = [];
-            render();
-            renderStats();
+            tickets = []; used = {};
+            render(); renderStats();
             progressLog.textContent = '正在读取 PDF...';
             document.getElementById('savedTag').style.display = 'none';
 
-            const arrayBuffer = await file.arrayBuffer();
-            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            const totalPages = pdf.numPages;
-            progressLog.textContent = `共 ${totalPages} 页，开始识别...`;
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                const totalPages = pdf.numPages;
+                progressLog.textContent = `共 ${totalPages} 页，开始智能识别排版...`;
+                await dbClear();
 
-            await dbClear(); // 清除旧的，准备写入新的
-            await dbClearPages();
+                // 用第一页自动探测每行、每列数量（假设每页排版一致）
+                progressLog.textContent = '正在探测每页排版（几行几列）...';
+                const probePage = await pdf.getPage(1);
+                const pvp = probePage.getViewport({ scale: 2.0 });
+                const probeCanvas = document.createElement('canvas');
+                probeCanvas.width = pvp.width; probeCanvas.height = pvp.height;
+                await probePage.render({ canvasContext: probeCanvas.getContext('2d'), viewport: pvp }).promise;
+                const grid = await detectGrid(probeCanvas);
+                progressLog.textContent = `已识别排版：约 ${grid.rows} 行 ${grid.cols} 列，开始逐张识别...`;
 
-            for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-                progressLog.textContent = `正在处理第 ${pageNum}/${totalPages} 页...`;
-                const page = await pdf.getPage(pageNum);
-                const scale = 2.5;
-                const viewport = page.getViewport({ scale });
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
-                await page.render({ canvasContext: ctx, viewport }).promise;
+                let idCounter = 0;
+                for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+                    progressLog.textContent = `正在识别第 ${pageNum}/${totalPages} 页...`;
+                    const page = await pdf.getPage(pageNum);
+                    const vp = page.getViewport({ scale: 2.0 });
+                    const full = document.createElement('canvas');
+                    full.width = vp.width; full.height = vp.height;
+                    await page.render({ canvasContext: full.getContext('2d'), viewport: vp }).promise;
 
-                // 保存整页原图（用于按原排版展示）
-                const pageImage = canvas.toDataURL('image/jpeg', 0.7);
-                const pageRec = { pageNum, image: pageImage, rows: 3, cols: 5 };
-                pages.push(pageRec);
-                await dbPutPage(pageRec);
-
-                const rows = 3, cols = 5;
-                const tileW = Math.floor(canvas.width / cols);
-                const tileH = Math.floor(canvas.height / rows);
-                for (let r = 0; r < rows; r++) {
-                    for (let c = 0; c < cols; c++) {
-                        const x = c * tileW, y = r * tileH;
-                        const padX = Math.floor(tileW * 0.02), padY = Math.floor(tileH * 0.015);
-                        const sx = x + padX, sy = y + padY;
-                        const sw = tileW - padX * 2, sh = tileH - padY * 2;
-                        const tileCanvas = document.createElement('canvas');
-                        tileCanvas.width = sw; tileCanvas.height = sh;
-                        tileCanvas.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-
-                        const url = await decodeQr(tileCanvas);
-                        if (url) {
-                            const id = tickets.length + 1;
+                    const tileW = full.width / grid.cols, tileH = full.height / grid.rows;
+                    for (let ri = 0; ri < grid.rows; ri++) {
+                        for (let ci = 0; ci < grid.cols; ci++) {
+                            const tile = makeTile(full, ci * tileW, ri * tileH, tileW, tileH);
+                            const url = await decodeQr(tile);
+                            if (!url) continue;
+                            idCounter++;
                             const ticket = {
-                                id,
-                                page: pageNum,
-                                row: r + 1,
-                                col: c + 1,
-                                url,
-                                image: tileCanvas.toDataURL('image/jpeg', 0.75),
-                                used: false,
-                                usedAt: null
+                                id: idCounter, page: pageNum, row: ri + 1, col: ci + 1,
+                                url, image: tile.toDataURL('image/jpeg', 0.8),
+                                used: false, usedAt: null
                             };
                             tickets.push(ticket);
                             await dbPut(ticket); // 实时保存，防止中途意外
                         }
                     }
                 }
+
+                if (tickets.length === 0) {
+                    progressLog.textContent = '没有识别到任何停车票二维码，请确认这是 PP停车券扫描件。';
+                    toast('未识别到票');
+                    return;
+                }
+
+                // 尽量保留之前的使用记录（按二维码链接匹配）
+                let restored = 0;
+                for (const t of tickets) {
+                    if (oldUsed[t.url]) { t.used = true; t.usedAt = t.usedAt || new Date().toISOString(); used[t.id] = true; await dbPut(t); restored++; }
+                }
+
+                progressLog.textContent = `识别完成，共 ${tickets.length} 张（每页约 ${grid.cols} 列、${grid.rows} 行）。已自动保存。` + (restored ? ` 已恢复 ${restored} 张使用记录。` : '');
+                updateDataState(true);
+                document.getElementById('savedTag').style.display = 'inline-block';
+                document.getElementById('uploadTitle').textContent = '已加载 ' + tickets.length + ' 张停车票';
+                document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。如需换 PDF，直接选择新文件即可。';
+                render(); renderStats();
+                toast('识别完成，已自动保存');
+            } catch (err) {
+                console.error(err);
+                progressLog.textContent = '识别出错：' + (err && err.message ? err.message : err);
+                toast('识别失败，请重试');
             }
-            progressLog.textContent = `识别完成，共 ${tickets.length} 张停车票。已自动保存。`;
-            updateDataState(true);
-            document.getElementById('savedTag').style.display = 'inline-block';
-            document.getElementById('uploadTitle').textContent = '已加载 ' + tickets.length + ' 张停车票';
-            document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。如需换 PDF，直接选择新文件即可。';
-            render();
-            renderStats();
-            toast('识别完成，已自动保存');
         }
 
         async function decodeQr(canvas) {
@@ -467,6 +468,34 @@
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
             return (code && code.data) ? code.data : null;
+        }
+
+        function makeTile(src, sx, sy, sw, sh) {
+            const tile = document.createElement('canvas');
+            tile.width = Math.max(1, Math.round(sw));
+            tile.height = Math.max(1, Math.round(sh));
+            tile.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, tile.width, tile.height);
+            return tile;
+        }
+
+        // 智能探测每页实际排版：枚举常见行列组合逐格解码，命中能"铺满"该组合即认定
+        // （优先试常见排版，标准 3×5 会直接命中、几乎不增加耗时；非标准排版也能自动适配）
+        async function detectGrid(full) {
+            const ordered = [[3,5],[3,4],[4,5],[2,5],[3,6],[4,4],[2,4],[2,3],[3,3],[4,6],[4,3],[2,6]];
+            let best = { rows: 3, cols: 5, hit: 0 };
+            for (const [rows, cols] of ordered) {
+                const tw = full.width / cols, th = full.height / rows;
+                let hit = 0;
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const tile = makeTile(full, c * tw, r * th, tw, th);
+                        if (await decodeQr(tile)) hit++;
+                    }
+                }
+                if (hit > best.hit) best = { rows, cols, hit };
+                if (hit === rows * cols) return best; // 该组合全部命中，认定为此排版
+            }
+            return best;
         }
 
         // ===== 标记使用（写 IndexedDB）=====
@@ -499,79 +528,35 @@
         function render() {
             const pagesEl = document.getElementById('pages');
             const empty = document.getElementById('empty');
-            pagesEl.className = 'pages' + (showUnusedOnly ? ' only-unused' : '');
+            pagesEl.className = 'grid';
             pagesEl.innerHTML = '';
 
-            // 没有整页图时（如旧备份），退化为单张网格
-            if (pages.length === 0) {
-                if (tickets.length === 0) { empty.style.display = 'block'; return; }
-                pagesEl.className = 'grid';
-                const firstUnused = tickets.find(t => !isUsed(t.id));
-                tickets.forEach(t => {
-                    const u = isUsed(t.id);
-                    const next = (firstUnused && firstUnused.id === t.id);
-                    const card = document.createElement('div');
-                    card.className = 'card ' + (u ? 'used' : 'unused') + (next ? ' next' : '');
-                    card.onclick = () => openModal(t.id);
-                    card.innerHTML = `
-                        <img src="${t.image}" alt="停车票#${t.id}">
-                        <div class="card-body">
-                            <div class="card-title">#${t.id} <span style="color:${u ? '#999' : 'var(--accent)'};font-size:12px">${u ? '已用' : '未用'}</span></div>
-                            <div class="card-pos">PDF 第${t.page}页 第${t.row}行 第${t.col}列</div>
-                            <div class="card-status" onclick="event.stopPropagation()">
-                                <input type="checkbox" ${u ? 'checked' : ''} onchange="setUsed(${t.id}, this.checked)">
-                                <span>${u ? '已使用' : '未使用'}</span>
-                            </div>
-                        </div>`;
-                    pagesEl.appendChild(card);
-                });
-                empty.style.display = 'none';
-                renderStats();
-                return;
-            }
+            let list = [...tickets];
+            list.sort((a, b) => a.id - b.id);
+            if (showUnusedOnly) list = list.filter(t => !isUsed(t.id));
 
+            if (list.length === 0) { empty.style.display = 'block'; return; }
             empty.style.display = 'none';
+
             const firstUnused = tickets.find(t => !isUsed(t.id));
-            const usedOnPage = pn => tickets.filter(t => t.page === pn && isUsed(t.id)).length;
-            const totalOnPage = pn => tickets.filter(t => t.page === pn).length;
-
-            pages.forEach(p => {
-                const section = document.createElement('div');
-                section.className = 'page-section';
-                section.dataset.page = p.pageNum;
-
-                const head = document.createElement('div');
-                head.className = 'page-head';
-                head.innerHTML = `<h3>第 ${p.pageNum} 页</h3><span class="page-used">已用 ${usedOnPage(p.pageNum)}/${totalOnPage(p.pageNum)}</span>`;
-                section.appendChild(head);
-
-                const wrap = document.createElement('div');
-                wrap.className = 'page-wrap';
-                const img = document.createElement('img');
-                img.className = 'page-img';
-                img.src = p.image;
-                wrap.appendChild(img);
-
-                const spots = document.createElement('div');
-                spots.className = 'hotspots';
-                tickets.filter(t => t.page === p.pageNum).forEach(t => {
-                    const cellW = 100 / p.cols;
-                    const cellH = 100 / p.rows;
-                    const spot = document.createElement('div');
-                    const u = isUsed(t.id);
-                    const next = (firstUnused && firstUnused.id === t.id);
-                    spot.className = 'hotspot ' + (u ? 'used' : 'unused') + (next ? ' next' : '');
-                    spot.style.left = ((t.col - 1) * cellW) + '%';
-                    spot.style.top = ((t.row - 1) * cellH) + '%';
-                    spot.style.width = cellW + '%';
-                    spot.style.height = cellH + '%';
-                    spot.onclick = () => openModal(t.id);
-                    spot.innerHTML = `<span class="no">#${t.id}</span>`;
-                    spots.appendChild(spot);
-                });
-                wrap.appendChild(spots);
-                section.appendChild(wrap);
-                pagesEl.appendChild(section);
+            list.forEach(t => {
+                const u = isUsed(t.id);
+                const next = (firstUnused && firstUnused.id === t.id);
+                const card = document.createElement('div');
+                card.className = 'card ' + (u ? 'used' : 'unused') + (next ? ' next' : '');
+                card.dataset.id = t.id;
+                card.onclick = () => openModal(t.id);
+                card.innerHTML = `
+                    <img src="${t.image}" alt="停车票#${t.id}">
+                    <div class="card-body">
+                        <div class="card-title">#${t.id} <span style="color:${u ? '#999' : 'var(--accent)'};font-size:12px">${u ? '已用' : '未用'}</span></div>
+                        <div class="card-pos">第${t.page}页 · 第${t.row}行 第${t.col}列</div>
+                        <div class="card-status" onclick="event.stopPropagation()">
+                            <input type="checkbox" ${u ? 'checked' : ''} onchange="setUsed(${t.id}, this.checked)">
+                            <span>${u ? '已使用' : '未使用'}</span>
+                        </div>
+                    </div>`;
+                pagesEl.appendChild(card);
             });
             renderStats();
         }
@@ -589,14 +574,10 @@
             if (tickets.length === 0) { toast('请先上传 PDF'); return; }
             const next = tickets.find(t => !isUsed(t.id));
             if (!next) { toast('没有未使用的票了'); return; }
-            render(); // 确保热点 .next 高亮已渲染
-            const section = document.querySelector(`.page-section[data-page="${next.page}"]`);
-            if (section) {
-                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                toast('第 ' + next.page + ' 页 · #' + next.id + ' 是下一张未用票');
-            } else {
-                openModal(next.id);
-            }
+            render();
+            const card = document.querySelector(`.card[data-id="${next.id}"]`);
+            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            else openModal(next.id);
         }
 
         function toggleView() {
