@@ -36,11 +36,12 @@
         .upload-area h2 { font-size: 18px; margin-bottom: 12px; }
         .upload-area p { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
         .progress-log { font-size: 13px; color: var(--muted); margin-top: 12px; min-height: 20px; }
-        .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px auto; max-width: 1200px; padding: 12px 14px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
-        .toolbar .divider { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
-        .toolbar .spacer { flex: 1; }
-        .toolbar .txt { font-size: 14px; color: var(--muted); }
-        .toolbar select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; background: #fff; }
+        .toolbar { display: flex; flex-direction: column; gap: 10px; margin: 16px auto; max-width: 1200px; padding: 12px 14px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+        .toolbar-main { display: flex; gap: 8px; flex-wrap: wrap; }
+        .toolbar-data { display: flex; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 10px; }
+        .toolbar button, .toolbar .file-label { flex: 1; min-width: 130px; }
+        .toolbar-data button, .toolbar-data .file-label { flex: 0 1 auto; min-width: 90px; }
+        .btn-secondary.active { background: var(--accent); color: #fff; }
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
         .card { background: var(--card); border-radius: 10px; border: 2px solid transparent; overflow: hidden; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; position: relative; }
         .card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
@@ -82,36 +83,39 @@
         .no-data .upload-area h2 { font-size: 19px; color: var(--text); font-weight: 700; }
         .no-data .upload-area p { font-size: 15px; line-height: 1.7; }
 
+        /* 有数据后：上传区收成一条紧凑状态栏 */
+        .loaded .upload-area {
+            margin: 10px auto 16px;
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg);
+            text-align: left;
+        }
+        .loaded .upload-area h2,
+        .loaded .upload-area p,
+        .loaded .upload-area #uploadBtnArea { display: none; }
+        .loaded .upload-area .progress-log { margin: 0; font-size: 13px; color: var(--muted); }
+
         /* 有数据时的移动端优化 */
         @media (max-width: 600px) {
-            /* header 紧凑：标题+统计一行 */
-            .header-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-            header { padding: 10px 14px !important; }
-            h1 { font-size: 16px; gap: 6px; margin: 0; }
-            .badge { font-size: 11px; }
-            .saved-tag { font-size: 11px; }
-            .stats { margin-top: 0; gap: 6px; flex-wrap: nowrap; overflow-x: auto; }
-            .stat-item { font-size: 13px; white-space: nowrap; }
-            .progress-bar { height: 8px; min-width: 100px; }
-            progress-wrap { min-width: 80px; flex: 1; }
+            /* header 紧凑：标题一行，统计换行 */
+            .header-inner { display: block; }
+            header { padding: 10px 14px; }
+            h1 { font-size: 16px; gap: 6px; }
+            .badge, .saved-tag { font-size: 11px; }
+            .stats { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; margin-top: 8px; }
+            .stats .stat-item { font-size: 13px; }
+            .stats .progress-wrap { flex-basis: 100%; order: 2; margin-top: 4px; }
+            .progress-bar { height: 8px; }
 
-            /* 工具栏两列等宽 */
-            .toolbar {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 8px;
-                padding: 10px 12px;
-                margin: 10px auto;
-            }
-            .toolbar .divider { display: none; }
-            .toolbar .spacer { display: none; }
-            .toolbar .txt,
-            .toolbar select,
-            .toolbar > *:nth-child(5),
-            .toolbar > *:nth-child(6),
-            .toolbar > *:nth-child(7),
-            .toolbar > *:nth-child(8) { grid-column: span 1; }
-            button, .file-label { padding: 11px 8px; font-size: 13px; min-height: 44px; text-align: center; }
+            /* 主操作：两列网格 */
+            .toolbar { padding: 10px 12px; margin: 10px auto; gap: 8px; }
+            .toolbar-main { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+            .toolbar-data { flex-wrap: nowrap; gap: 6px; padding-top: 8px; }
+            .toolbar-data > * { flex: 1 1 0; min-width: 0; white-space: nowrap; }
+            button, .file-label { padding: 11px 6px; font-size: 13px; min-height: 44px; text-align: center; }
+            .toolbar button, .toolbar .file-label { min-width: 0; }
 
             .grid { grid-template-columns: repeat(auto-fill, minmax(105px, 1fr)); gap: 8px; }
             .card-title { font-size: 13px; }
@@ -123,6 +127,7 @@
             .upload-area h2 { font-size: 16px; }
             .modal { max-width: 100%; }
             main { padding: 0 12px; margin: 10px auto; }
+            .toast { bottom: calc(20px + env(safe-area-inset-bottom)); }
         }
     </style>
 </head>
@@ -142,21 +147,18 @@
     </header>
     <main>
         <div class="toolbar" id="toolbar">
-            <label class="file-label"><input type="file" id="pdfInput" accept="application/pdf">选择 PDF</label>
-            <button class="btn-primary" onclick="useNext()">标记下一张已用</button>
-            <button class="btn-secondary" onclick="scrollToNext()">跳到第一张未用</button>
-            <button class="btn-secondary" onclick="toggleView()">未用/全部</button>
-            <span class="divider"></span>
-            <span class="txt">排序</span>
-            <select id="sortSelect" onchange="render()">
-                <option value="id">按编号</option>
-                <option value="page">按PDF页码</option>
-            </select>
-            <button class="btn-secondary" onclick="markFirstN()">批量标记前N张</button>
-            <span class="spacer"></span>
-            <button class="btn-secondary" onclick="exportData()">导出备份</button>
-            <label class="file-label" style="background:#f0f0f0;color:#333"><input type="file" id="importInput" accept="application/json">导入备份</label>
-            <button class="btn-danger" onclick="clearAll()">清除全部</button>
+            <div class="toolbar-main">
+                <label class="file-label" id="choosePdfLabel"><input type="file" id="pdfInput" accept="application/pdf">选择 PDF</label>
+                <button class="btn-primary" onclick="useNext()">标记下一张已用</button>
+                <button class="btn-secondary" onclick="scrollToNext()">跳到第一张未用</button>
+                <button class="btn-secondary" id="toggleViewBtn" onclick="toggleView()">未用/全部</button>
+                <button class="btn-secondary" onclick="markFirstN()">批量标记前N张</button>
+            </div>
+            <div class="toolbar-data">
+                <button class="btn-secondary" onclick="exportData()">导出备份</button>
+                <label class="file-label" style="background:#f0f0f0;color:#333"><input type="file" id="importInput" accept="application/json">导入备份</label>
+                <button class="btn-danger" onclick="clearAll()">清除全部</button>
+            </div>
         </div>
         <div class="upload-area" id="dropZone">
             <h2 id="uploadTitle">把停车票 PDF 拖到这里，或点下方按钮</h2>
@@ -272,9 +274,11 @@
         function updateDataState(hasData) {
             if (hasData) {
                 document.body.classList.remove('no-data');
-                document.getElementById('toolbar').style.display = 'grid';
+                document.body.classList.add('loaded');
+                document.getElementById('toolbar').style.display = 'flex';
             } else {
                 document.body.classList.add('no-data');
+                document.body.classList.remove('loaded');
                 document.getElementById('toolbar').style.display = 'none';
             }
         }
@@ -287,13 +291,10 @@
                 used = {};
                 tickets.forEach(t => { if (t.used) used[t.id] = true; });
                 updateDataState(true);
-                document.getElementById('toolbar').style.display = 'grid';
-                document.getElementById('uploadTitle').textContent = '已加载 ' + tickets.length + ' 张停车票';
-                document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。如需换 PDF，直接选择新文件即可。';
                 document.getElementById('savedTag').style.display = 'inline-block';
                 render();
                 renderStats();
-                progressLog.textContent = '已从本地恢复 ' + tickets.length + ' 张停车票。';
+                progressLog.textContent = '已加载 ' + tickets.length + ' 张停车票 · 已自动保存';
             } else {
                 document.getElementById('savedTag').style.display = 'none';
                 updateDataState(false);
@@ -410,9 +411,8 @@
         function render() {
             const grid = document.getElementById('grid');
             const empty = document.getElementById('empty');
-            const sort = document.getElementById('sortSelect')?.value || 'id';
             let list = [...tickets];
-            list.sort((a, b) => a[sort] - b[sort]);
+            list.sort((a, b) => a.id - b.id);
             if (showUnusedOnly) list = list.filter(t => !isUsed(t.id));
 
             grid.innerHTML = '';
@@ -461,7 +461,12 @@
             else openModal(next.id);
         }
 
-        function toggleView() { showUnusedOnly = !showUnusedOnly; render(); }
+        function toggleView() {
+            showUnusedOnly = !showUnusedOnly;
+            const btn = document.getElementById('toggleViewBtn');
+            if (btn) btn.classList.toggle('active', showUnusedOnly);
+            render();
+        }
 
         async function markFirstN() {
             const input = prompt('要把前多少张标记为已用？（输入数字，例如 5）');
