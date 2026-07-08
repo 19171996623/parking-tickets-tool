@@ -67,22 +67,62 @@
         .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
         .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 14px; z-index: 200; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
         .toast.show { opacity: 1; }
+
+        /* ===== 无数据时：极简模式，只突出上传 ===== */
+        .no-data .stats { display: none; }
+        .no-data .toolbar { display: none !important; }
+        .no-data header { padding-bottom: 8px; }
+        .no-data .upload-area {
+            margin-top: 24px;
+            padding: 50px 20px 40px;
+            border: 2px dashed var(--accent);
+            background: var(--accent-light);
+        }
+        .no-data #uploadBtnArea { display: inline-block !important; }
+        .no-data .upload-area h2 { font-size: 19px; color: var(--text); font-weight: 700; }
+        .no-data .upload-area p { font-size: 15px; line-height: 1.7; }
+
+        /* 有数据时的移动端优化 */
         @media (max-width: 600px) {
-            .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
-            .card-title { font-size: 13px; }
-            .stats { flex-direction: column; align-items: flex-start; }
-            .progress-wrap { width: 100%; }
-            button, .file-label { padding: 12px 14px; font-size: 14px; min-height: 44px; }
-            .toolbar { padding: 10px; gap: 6px; margin: 12px auto; }
+            /* header 紧凑：标题+统计一行 */
+            .header-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+            header { padding: 10px 14px !important; }
+            h1 { font-size: 16px; gap: 6px; margin: 0; }
+            .badge { font-size: 11px; }
+            .saved-tag { font-size: 11px; }
+            .stats { margin-top: 0; gap: 6px; flex-wrap: nowrap; overflow-x: auto; }
+            .stat-item { font-size: 13px; white-space: nowrap; }
+            .progress-bar { height: 8px; min-width: 100px; }
+            progress-wrap { min-width: 80px; flex: 1; }
+
+            /* 工具栏两列等宽 */
+            .toolbar {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+                padding: 10px 12px;
+                margin: 10px auto;
+            }
             .toolbar .divider { display: none; }
             .toolbar .spacer { display: none; }
+            .toolbar .txt,
+            .toolbar select,
+            .toolbar > *:nth-child(5),
+            .toolbar > *:nth-child(6),
+            .toolbar > *:nth-child(7),
+            .toolbar > *:nth-child(8) { grid-column: span 1; }
+            button, .file-label { padding: 11px 8px; font-size: 13px; min-height: 44px; text-align: center; }
+
+            .grid { grid-template-columns: repeat(auto-fill, minmax(105px, 1fr)); gap: 8px; }
+            .card-title { font-size: 13px; }
+            .card-body { padding: 6px 8px; }
+            .card-pos { font-size: 11px; display: none; }
+            .card-status { margin-top: 4px; font-size: 11px; }
             .card { -webkit-tap-highlight-color: transparent; }
-            h1 { font-size: 17px; }
             .upload-area { padding: 28px 16px; }
             .upload-area h2 { font-size: 16px; }
             .modal { max-width: 100%; }
-            header { padding: 12px 14px; }
-            main { padding: 0 14px; }
+            main { padding: 0 12px; margin: 10px auto; }
         }
     </style>
 </head>
@@ -119,8 +159,9 @@
             <button class="btn-danger" onclick="clearAll()">清除全部</button>
         </div>
         <div class="upload-area" id="dropZone">
-            <h2 id="uploadTitle">把停车票 PDF 拖到这里，或点上方"选择 PDF"</h2>
+            <h2 id="uploadTitle">把停车票 PDF 拖到这里，或点下方按钮</h2>
             <p id="uploadDesc">自动识别切割成单张停车票，进度自动保存（关掉重开不丢失）。手机用户从微信或文件管理器选 PDF 即可。</p>
+            <label class="file-label" id="uploadBtnArea" style="display:none;font-size:18px;padding:16px 32px;margin-top:12px"><input type="file" id="pdfInputMobile" accept="application/pdf">📄 选择停车票 PDF</label>
             <div class="progress-log" id="progressLog">等待 PDF...首次识别约需几十秒，请耐心等待。</div>
         </div>
         <div id="grid" class="grid"></div>
@@ -208,6 +249,10 @@
         // ===== 事件 =====
         pdfInput.addEventListener('change', e => { if (e.target.files[0]) processPdf(e.target.files[0]); });
         importInput.addEventListener('change', e => { if (e.target.files[0]) importData(e.target.files[0]); });
+        document.getElementById('pdfInputMobile').addEventListener('change', e => {
+            if (e.target.files[0]) processPdf(e.target.files[0]);
+            e.target.value = ''; // 允许重复选同一文件
+        });
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
             dropZone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); }, false);
         });
@@ -223,6 +268,17 @@
             setTimeout(() => el.classList.remove('show'), 2000);
         }
 
+        // ===== 状态切换（无数据时极简模式）=====
+        function updateDataState(hasData) {
+            if (hasData) {
+                document.body.classList.remove('no-data');
+                document.getElementById('toolbar').style.display = 'grid';
+            } else {
+                document.body.classList.add('no-data');
+                document.getElementById('toolbar').style.display = 'none';
+            }
+        }
+
         // ===== 初始化：先从 IndexedDB 读 =====
         async function init() {
             const saved = await dbGetAll();
@@ -230,7 +286,8 @@
                 tickets = saved.sort((a, b) => a.id - b.id);
                 used = {};
                 tickets.forEach(t => { if (t.used) used[t.id] = true; });
-                document.getElementById('toolbar').style.display = 'flex';
+                updateDataState(true);
+                document.getElementById('toolbar').style.display = 'grid';
                 document.getElementById('uploadTitle').textContent = '已加载 ' + tickets.length + ' 张停车票';
                 document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。如需换 PDF，直接选择新文件即可。';
                 document.getElementById('savedTag').style.display = 'inline-block';
@@ -239,6 +296,7 @@
                 progressLog.textContent = '已从本地恢复 ' + tickets.length + ' 张停车票。';
             } else {
                 document.getElementById('savedTag').style.display = 'none';
+                updateDataState(false);
             }
         }
 
@@ -306,10 +364,10 @@
                 }
             }
             progressLog.textContent = `识别完成，共 ${tickets.length} 张停车票。已自动保存。`;
-            document.getElementById('toolbar').style.display = 'flex';
+            updateDataState(true);
             document.getElementById('savedTag').style.display = 'inline-block';
             document.getElementById('uploadTitle').textContent = '已加载 ' + tickets.length + ' 张停车票';
-            document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。';
+            document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。如需换 PDF，直接选择新文件即可。';
             render();
             renderStats();
             toast('识别完成，已自动保存');
