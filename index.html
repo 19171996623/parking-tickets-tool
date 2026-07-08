@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>停车票管理工具</title>
+    <script src="./lib/pdf.min.js"></script>
+    <script src="./lib/jsQR.js"></script>
+    <style>
+        :root { --bg: #f7f8fa; --card: #fff; --accent: #00b578; --accent-light: #e6f9f1; --danger: #ff4d4f; --warn: #fa8c16; --text: #333; --muted: #888; --border: #e0e0e0; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+        header { background: var(--card); padding: 16px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 20; }
+        .header-inner { max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .badge { background: var(--accent); color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 12px; }
+        .saved-tag { background: var(--accent-light); color: var(--accent); font-size: 12px; padding: 2px 8px; border-radius: 12px; border: 1px solid var(--accent); }
+        .stats { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+        .progress-wrap { flex: 1; min-width: 200px; }
+        .progress-bar { height: 10px; background: #e5e7eb; border-radius: 5px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--accent); width: 0; transition: width 0.3s; }
+        .stat-item { font-size: 14px; color: var(--muted); }
+        .stat-item b { color: var(--text); }
+        .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+        button, .file-label { border: none; padding: 8px 14px; border-radius: 6px; font-size: 14px; cursor: pointer; transition: opacity 0.2s; display: inline-block; }
+        button:hover, .file-label:hover { opacity: 0.85; }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-secondary { background: #f0f0f0; color: #333; }
+        .btn-danger { background: var(--danger); color: #fff; }
+        .btn-warn { background: var(--warn); color: #fff; }
+        .file-label { background: var(--accent); color: #fff; }
+        .file-label input { display: none; }
+        main { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+        .upload-area { border: 2px dashed var(--border); border-radius: 12px; padding: 40px 20px; text-align: center; background: var(--card); margin-bottom: 20px; }
+        .upload-area.dragover { border-color: var(--accent); background: var(--accent-light); }
+        .upload-area h2 { font-size: 18px; margin-bottom: 12px; }
+        .upload-area p { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+        .progress-log { font-size: 13px; color: var(--muted); margin-top: 12px; min-height: 20px; }
+        .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+        .toolbar label { font-size: 14px; color: var(--muted); }
+        .toolbar select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; }
+        .toolbar .spacer { flex: 1; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+        .card { background: var(--card); border-radius: 10px; border: 2px solid transparent; overflow: hidden; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; position: relative; }
+        .card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
+        .card.used { border-color: #d9d9d9; opacity: 0.65; }
+        .card.unused { border-color: var(--accent); }
+        .card.next { box-shadow: 0 0 0 3px rgba(0,181,120,0.3); }
+        .card img { width: 100%; display: block; aspect-ratio: 496/1169; object-fit: contain; background: #fff; }
+        .card-body { padding: 10px; }
+        .card-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; }
+        .card-pos { font-size: 12px; color: var(--muted); margin-top: 2px; }
+        .card-status { font-size: 12px; margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+        .card-status input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+        .card-status span { color: var(--muted); }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: var(--card); border-radius: 14px; max-width: 420px; width: 100%; max-height: 90vh; overflow: auto; position: relative; }
+        .modal-close { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.5); color: #fff; font-size: 20px; line-height: 32px; text-align: center; cursor: pointer; border: none; padding: 0; }
+        .modal img { width: 100%; display: block; }
+        .modal-body { padding: 16px; }
+        .modal-body h2 { font-size: 18px; margin-bottom: 10px; }
+        .modal-body .url { font-size: 12px; color: var(--muted); word-break: break-all; background: #f5f5f5; padding: 8px; border-radius: 6px; margin-bottom: 12px; max-height: 80px; overflow: auto; }
+        .modal-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .modal-actions button { flex: 1; min-width: 100px; }
+        .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+        .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 14px; z-index: 200; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+        .toast.show { opacity: 1; }
+        @media (max-width: 600px) {
+            .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+            .card-title { font-size: 13px; }
+            .stats { flex-direction: column; align-items: flex-start; }
+            .progress-wrap { width: 100%; }
+            button, .file-label { padding: 12px 14px; font-size: 14px; min-height: 44px; }
+            .actions { gap: 8px; }
+            .card { -webkit-tap-highlight-color: transparent; }
+            h1 { font-size: 17px; }
+            .upload-area { padding: 28px 16px; }
+            .upload-area h2 { font-size: 16px; }
+            .modal { max-width: 100%; }
+            header { padding: 12px 14px; }
+            main { padding: 0 14px; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-inner">
+            <h1>停车票管理工具 <span class="badge" id="badge">0 张</span> <span class="saved-tag" id="savedTag" style="display:none">已自动保存</span></h1>
+            <div class="stats">
+                <div class="progress-wrap">
+                    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                </div>
+                <div class="stat-item">已用 <b id="usedCount">0</b></div>
+                <div class="stat-item">未用 <b id="unusedCount">0</b></div>
+                <div class="stat-item">合计 <b id="totalCount">0</b></div>
+            </div>
+            <div class="actions">
+                <label class="file-label"><input type="file" id="pdfInput" accept="application/pdf">选择 PDF</label>
+                <button class="btn-primary" onclick="useNext()">标记下一张已用</button>
+                <button class="btn-secondary" onclick="scrollToNext()">跳到第一张未用</button>
+                <button class="btn-secondary" onclick="toggleView()">切换：未用/全部</button>
+                <button class="btn-warn" onclick="exportData()">导出备份</button>
+                <label class="file-label" style="background:#f0f0f0;color:#333"><input type="file" id="importInput" accept="application/json">导入备份</label>
+                <button class="btn-danger" onclick="clearAll()">清除全部</button>
+            </div>
+        </div>
+    </header>
+    <main>
+        <div class="upload-area" id="dropZone">
+            <h2 id="uploadTitle">点击上方"选择 PDF"上传停车票文件</h2>
+            <p id="uploadDesc">自动识别切割成单张停车票，进度自动保存（关掉重开不丢失）。手机用户从微信或文件管理器选 PDF 即可。</p>
+            <div class="progress-log" id="progressLog">等待 PDF...首次识别约需几十秒，请耐心等待。</div>
+        </div>
+        <div class="toolbar" id="toolbar" style="display:none">
+            <label>排序：</label>
+            <select id="sortSelect" onchange="render()">
+                <option value="id">按编号顺序</option>
+                <option value="page">按PDF页码</option>
+            </select>
+            <div class="spacer"></div>
+            <button class="btn-secondary" onclick="markFirstN()">批量标记前N张已用</button>
+        </div>
+        <div id="grid" class="grid"></div>
+        <div id="empty" class="empty" style="display:none">没有符合条件的停车票</div>
+    </main>
+
+    <div class="modal-overlay" id="modal" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <img id="modalImg" src="" alt="停车票">
+            <div class="modal-body">
+                <h2 id="modalTitle">停车票 #1</h2>
+                <div class="url" id="modalUrl"></div>
+                <div class="modal-actions">
+                    <button class="btn-primary" id="modalUseBtn" onclick="toggleCurrent()">标记已用</button>
+                    <button class="btn-secondary" onclick="copyCurrentUrl()">复制链接</button>
+                    <button class="btn-secondary" onclick="openCurrentUrl()">打开链接</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = './lib/pdf.worker.min.js';
+
+        // ===== IndexedDB 持久化 =====
+        const DB_NAME = 'parking_tickets_db';
+        const DB_VERSION = 1;
+        const STORE = 'tickets';
+        const LEGACY_LS_KEY = 'parking_tickets_used_v1'; // 旧版 localStorage 兼容
+
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onupgradeneeded = e => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        async function dbGetAll() {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE, 'readonly');
+                const req = tx.objectStore(STORE).getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        async function dbPut(ticket) {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE, 'readwrite');
+                tx.objectStore(STORE).put(ticket);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+        async function dbClear() {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE, 'readwrite');
+                tx.objectStore(STORE).clear();
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+
+        // ===== 状态 =====
+        let tickets = [];
+        let used = {};
+        let currentId = null;
+        let showUnusedOnly = false;
+
+        // ===== UI 元素 =====
+        const dropZone = document.getElementById('dropZone');
+        const progressLog = document.getElementById('progressLog');
+        const pdfInput = document.getElementById('pdfInput');
+        const importInput = document.getElementById('importInput');
+
+        // ===== 事件 =====
+        pdfInput.addEventListener('change', e => { if (e.target.files[0]) processPdf(e.target.files[0]); });
+        importInput.addEventListener('change', e => { if (e.target.files[0]) importData(e.target.files[0]); });
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
+            dropZone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); }, false);
+        });
+        ['dragenter', 'dragover'].forEach(evt => dropZone.addEventListener(evt, () => dropZone.classList.add('dragover'), false));
+        ['dragleave', 'drop'].forEach(evt => dropZone.addEventListener(evt, () => dropZone.classList.remove('dragover'), false));
+        dropZone.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f && f.type === 'application/pdf') processPdf(f); }, false);
+
+        // ===== Toast =====
+        function toast(msg) {
+            const el = document.getElementById('toast');
+            el.textContent = msg;
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 2000);
+        }
+
+        // ===== 初始化：先从 IndexedDB 读 =====
+        async function init() {
+            const saved = await dbGetAll();
+            if (saved.length > 0) {
+                tickets = saved.sort((a, b) => a.id - b.id);
+                used = {};
+                tickets.forEach(t => { if (t.used) used[t.id] = true; });
+                document.getElementById('toolbar').style.display = 'flex';
+                document.getElementById('uploadTitle').textContent = '已加载 ' + tickets.length + ' 张停车票';
+                document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。如需换 PDF，直接选择新文件即可。';
+                document.getElementById('savedTag').style.display = 'inline-block';
+                render();
+                renderStats();
+                progressLog.textContent = '已从本地恢复 ' + tickets.length + ' 张停车票。';
+            } else {
+                document.getElementById('savedTag').style.display = 'none';
+            }
+        }
+
+        // ===== 处理 PDF =====
+        async function processPdf(file) {
+            const confirmReplace = tickets.length > 0 ? confirm('当前已有 ' + tickets.length + ' 张票的数据，处理新 PDF 会覆盖现有数据（使用记录会保留并尝试匹配新顺序）。是否继续？') : true;
+            if (!confirmReplace) return;
+
+            const oldUsed = { ...used };
+            tickets = [];
+            used = {};
+            render();
+            renderStats();
+            progressLog.textContent = '正在读取 PDF...';
+            document.getElementById('savedTag').style.display = 'none';
+
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const totalPages = pdf.numPages;
+            progressLog.textContent = `共 ${totalPages} 页，开始识别...`;
+
+            await dbClear(); // 清除旧的，准备写入新的
+
+            for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+                progressLog.textContent = `正在处理第 ${pageNum}/${totalPages} 页...`;
+                const page = await pdf.getPage(pageNum);
+                const scale = 2.5;
+                const viewport = page.getViewport({ scale });
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                await page.render({ canvasContext: ctx, viewport }).promise;
+
+                const rows = 3, cols = 5;
+                const tileW = Math.floor(canvas.width / cols);
+                const tileH = Math.floor(canvas.height / rows);
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const x = c * tileW, y = r * tileH;
+                        const padX = Math.floor(tileW * 0.02), padY = Math.floor(tileH * 0.015);
+                        const sx = x + padX, sy = y + padY;
+                        const sw = tileW - padX * 2, sh = tileH - padY * 2;
+                        const tileCanvas = document.createElement('canvas');
+                        tileCanvas.width = sw; tileCanvas.height = sh;
+                        tileCanvas.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+                        const url = await decodeQr(tileCanvas);
+                        if (url) {
+                            const id = tickets.length + 1;
+                            const ticket = {
+                                id,
+                                page: pageNum,
+                                row: r + 1,
+                                col: c + 1,
+                                url,
+                                image: tileCanvas.toDataURL('image/jpeg', 0.75),
+                                used: false,
+                                usedAt: null
+                            };
+                            tickets.push(ticket);
+                            await dbPut(ticket); // 实时保存，防止中途意外
+                        }
+                    }
+                }
+            }
+            progressLog.textContent = `识别完成，共 ${tickets.length} 张停车票。已自动保存。`;
+            document.getElementById('toolbar').style.display = 'flex';
+            document.getElementById('savedTag').style.display = 'inline-block';
+            document.getElementById('uploadTitle').textContent = '已加载 ' + tickets.length + ' 张停车票';
+            document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。';
+            render();
+            renderStats();
+            toast('识别完成，已自动保存');
+        }
+
+        async function decodeQr(canvas) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+            return (code && code.data) ? code.data : null;
+        }
+
+        // ===== 标记使用（写 IndexedDB）=====
+        async function setUsed(id, checked) {
+            used[id] = checked;
+            const t = tickets.find(x => x.id === id);
+            if (t) {
+                t.used = checked;
+                t.usedAt = checked ? new Date().toISOString() : null;
+                await dbPut(t);
+            }
+            renderStats();
+            render();
+        }
+
+        function isUsed(id) { return !!used[id]; }
+
+        // ===== 渲染 =====
+        function renderStats() {
+            const total = tickets.length;
+            const usedCount = tickets.filter(t => t.used).length;
+            const unusedCount = total - usedCount;
+            document.getElementById('usedCount').textContent = usedCount;
+            document.getElementById('unusedCount').textContent = unusedCount;
+            document.getElementById('totalCount').textContent = total;
+            document.getElementById('progressFill').style.width = total ? (usedCount / total * 100) + '%' : '0%';
+            document.getElementById('badge').textContent = total + ' 张';
+        }
+
+        function render() {
+            const grid = document.getElementById('grid');
+            const empty = document.getElementById('empty');
+            const sort = document.getElementById('sortSelect')?.value || 'id';
+            let list = [...tickets];
+            list.sort((a, b) => a[sort] - b[sort]);
+            if (showUnusedOnly) list = list.filter(t => !isUsed(t.id));
+
+            grid.innerHTML = '';
+            if (list.length === 0) { empty.style.display = 'block'; return; }
+            empty.style.display = 'none';
+
+            const firstUnused = list.find(t => !isUsed(t.id));
+            list.forEach(t => {
+                const u = isUsed(t.id);
+                const next = (firstUnused && firstUnused.id === t.id);
+                const card = document.createElement('div');
+                card.className = 'card ' + (u ? 'used' : 'unused') + (next ? ' next' : '');
+                card.onclick = () => openModal(t.id);
+                card.innerHTML = `
+                    <img src="${t.image}" alt="停车票#${t.id}">
+                    <div class="card-body">
+                        <div class="card-title">#${t.id} <span style="color:${u ? '#999' : 'var(--accent)'};font-size:12px">${u ? '已用' : '未用'}</span></div>
+                        <div class="card-pos">PDF 第${t.page}页 第${t.row}行 第${t.col}列</div>
+                        <div class="card-status" onclick="event.stopPropagation()">
+                            <input type="checkbox" ${u ? 'checked' : ''} onchange="setUsed(${t.id}, this.checked)">
+                            <span>${u ? '已使用' : '未使用'}</span>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+            renderStats();
+        }
+
+        // ===== 操作 =====
+        async function useNext() {
+            if (tickets.length === 0) { toast('请先上传 PDF'); return; }
+            const next = tickets.find(t => !isUsed(t.id));
+            if (!next) { toast('所有票都已标记为已用'); return; }
+            await setUsed(next.id, true);
+            openModal(next.id);
+        }
+
+        function scrollToNext() {
+            if (tickets.length === 0) { toast('请先上传 PDF'); return; }
+            const next = tickets.find(t => !isUsed(t.id));
+            if (!next) { toast('没有未使用的票了'); return; }
+            const cards = document.querySelectorAll('.card');
+            const idx = [...cards].findIndex(c => c.querySelector('.card-title')?.textContent.includes('#' + next.id));
+            if (idx >= 0) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            else openModal(next.id);
+        }
+
+        function toggleView() { showUnusedOnly = !showUnusedOnly; render(); }
+
+        async function markFirstN() {
+            const input = prompt('要把前多少张标记为已用？（输入数字，例如 5）');
+            if (!input) return;
+            const n = parseInt(input, 10);
+            if (isNaN(n) || n < 1) { toast('请输入有效数字'); return; }
+            const targets = tickets.slice(0, Math.min(n, tickets.length));
+            for (const t of targets) {
+                if (!t.used) await setUsed(t.id, true);
+            }
+            toast('已标记前 ' + targets.length + ' 张为已用');
+        }
+
+        async function clearAll() {
+            if (!confirm('确定清除所有保存的停车票数据吗？\n（包括所有票图和使用记录，不可恢复）')) return;
+            await dbClear();
+            tickets = [];
+            used = {};
+            localStorage.removeItem(LEGACY_LS_KEY);
+            location.reload();
+        }
+
+        // ===== 模态框 =====
+        function openModal(id) {
+            currentId = id;
+            const t = tickets.find(x => x.id === id);
+            if (!t) return;
+            document.getElementById('modalImg').src = t.image;
+            document.getElementById('modalTitle').textContent = '停车票 #' + t.id + '（PDF第' + t.page + '页）';
+            document.getElementById('modalUrl').textContent = t.url;
+            document.getElementById('modalUseBtn').textContent = isUsed(id) ? '取消已用' : '标记已用';
+            document.getElementById('modal').classList.add('active');
+        }
+        function closeModal(e) {
+            if (e && e.target !== e.currentTarget) return;
+            document.getElementById('modal').classList.remove('active');
+            currentId = null;
+        }
+        async function toggleCurrent() {
+            if (currentId == null) return;
+            await setUsed(currentId, !isUsed(currentId));
+            document.getElementById('modalUseBtn').textContent = isUsed(currentId) ? '取消已用' : '标记已用';
+        }
+        function copyCurrentUrl() {
+            if (currentId == null) return;
+            const t = tickets.find(x => x.id === currentId);
+            navigator.clipboard.writeText(t.url).then(() => toast('链接已复制'));
+        }
+        function openCurrentUrl() {
+            if (currentId == null) return;
+            const t = tickets.find(x => x.id === currentId);
+            window.open(t.url, '_blank');
+        }
+
+        // ===== 导出/导入 =====
+        function exportData() {
+            if (tickets.length === 0) { toast('没有数据可导出'); return; }
+            const data = JSON.stringify(tickets, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const d = new Date();
+            const stamp = d.getFullYear() + ('0'+(d.getMonth()+1)).slice(-2) + ('0'+d.getDate()).slice(-2);
+            a.href = url;
+            a.download = '停车票备份_' + stamp + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            toast('备份已导出');
+        }
+        async function importData(file) {
+            try {
+                const text = await file.text();
+                const data = JSON.parse(text);
+                if (!Array.isArray(data)) throw new Error('格式错误');
+                if (!confirm('将导入 ' + data.length + ' 张票的数据，会覆盖当前数据。是否继续？')) return;
+                await dbClear();
+                for (const t of data) {
+                    if (!t.used) t.used = false;
+                    if (!t.usedAt) t.usedAt = null;
+                    await dbPut(t);
+                }
+                toast('导入成功');
+                setTimeout(() => location.reload(), 800);
+            } catch (e) {
+                toast('导入失败：' + e.message);
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') closeModal();
+            if (e.key === ' ' && currentId != null) { e.preventDefault(); toggleCurrent(); }
+        });
+
+        // 启动
+        init();
+    </script>
+</body>
+</html>
