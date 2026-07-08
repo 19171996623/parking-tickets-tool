@@ -55,6 +55,49 @@
         .card-status { font-size: 12px; margin-top: 6px; display: flex; align-items: center; gap: 6px; }
         .card-status input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
         .card-status span { color: var(--muted); }
+
+        /* ===== 页面视图（按 PDF 原排版展示整页）===== */
+        .pages { display: flex; flex-direction: column; gap: 26px; }
+        .page-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; scroll-margin-top: 12px; }
+        .page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .page-head h3 { font-size: 15px; font-weight: 600; margin: 0; }
+        .page-head .page-used { font-size: 12px; color: var(--muted); margin-left: auto; }
+        .page-wrap { position: relative; line-height: 0; }
+        .page-img { width: 100%; height: auto; display: block; border-radius: 6px; }
+        .hotspots { position: absolute; inset: 0; }
+        .hotspot {
+            position: absolute;
+            border: 2px solid transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s, opacity 0.15s;
+        }
+        .hotspot:hover { border-color: var(--accent); background: rgba(0,181,120,0.07); }
+        .hotspot.next { border-color: var(--accent); box-shadow: inset 0 0 0 3px rgba(0,181,120,0.4); }
+        .hotspot .no {
+            position: absolute;
+            right: 2px; bottom: 2px;
+            font-size: 11px; line-height: 1.2;
+            background: var(--accent); color: #fff;
+            padding: 1px 5px; border-radius: 8px 0 0 0;
+            pointer-events: none;
+        }
+        .hotspot.used { background: rgba(0,0,0,0.3); }
+        .hotspot.used .no { background: rgba(0,0,0,0.55); }
+        .hotspot.used::after {
+            content: '✓';
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            width: 30px; height: 30px;
+            background: var(--accent); color: #fff;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; opacity: 0.95;
+            pointer-events: none;
+        }
+        .pages.only-unused .hotspot.used { opacity: 0.25; }
+
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
         .modal-overlay.active { display: flex; }
         .modal { background: var(--card); border-radius: 14px; max-width: 420px; width: 100%; max-height: 90vh; overflow: auto; position: relative; }
@@ -127,6 +170,12 @@
             .upload-area h2 { font-size: 16px; }
             .modal { max-width: 100%; }
             main { padding: 0 12px; margin: 10px auto; }
+            .pages { gap: 18px; }
+            .page-section { padding: 10px; }
+            .page-head h3 { font-size: 14px; }
+            .hotspot { border-width: 1.5px; }
+            .hotspot .no { font-size: 10px; padding: 1px 4px; }
+            .hotspot.used::after { width: 24px; height: 24px; font-size: 15px; }
             .toast { bottom: calc(20px + env(safe-area-inset-bottom)); }
         }
     </style>
@@ -166,7 +215,7 @@
             <label class="file-label" id="uploadBtnArea" style="display:none;font-size:18px;padding:16px 32px;margin-top:12px"><input type="file" id="pdfInputMobile" accept="application/pdf">📄 选择停车票 PDF</label>
             <div class="progress-log" id="progressLog">等待 PDF...首次识别约需几十秒，请耐心等待。</div>
         </div>
-        <div id="grid" class="grid"></div>
+        <div id="pages" class="pages"></div>
         <div id="empty" class="empty" style="display:none">没有符合条件的停车票</div>
     </main>
 
@@ -203,6 +252,7 @@
                 req.onupgradeneeded = e => {
                     const db = e.target.result;
                     if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
+                    if (!db.objectStoreNames.contains('pages')) db.createObjectStore('pages', { keyPath: 'pageNum' });
                 };
                 req.onsuccess = () => resolve(req.result);
                 req.onerror = () => reject(req.error);
@@ -235,10 +285,38 @@
                 tx.onerror = () => reject(tx.error);
             });
         }
+        async function dbGetPages() {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction('pages', 'readonly');
+                const req = tx.objectStore('pages').getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        async function dbPutPage(page) {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction('pages', 'readwrite');
+                tx.objectStore('pages').put(page);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+        async function dbClearPages() {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction('pages', 'readwrite');
+                tx.objectStore('pages').clear();
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
 
         // ===== 状态 =====
         let tickets = [];
         let used = {};
+        let pages = [];
         let currentId = null;
         let showUnusedOnly = false;
 
@@ -286,6 +364,8 @@
         // ===== 初始化：先从 IndexedDB 读 =====
         async function init() {
             const saved = await dbGetAll();
+            const savedPages = await dbGetPages();
+            pages = savedPages.sort((a, b) => a.pageNum - b.pageNum);
             if (saved.length > 0) {
                 tickets = saved.sort((a, b) => a.id - b.id);
                 used = {};
@@ -309,6 +389,7 @@
             const oldUsed = { ...used };
             tickets = [];
             used = {};
+            pages = [];
             render();
             renderStats();
             progressLog.textContent = '正在读取 PDF...';
@@ -320,6 +401,7 @@
             progressLog.textContent = `共 ${totalPages} 页，开始识别...`;
 
             await dbClear(); // 清除旧的，准备写入新的
+            await dbClearPages();
 
             for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
                 progressLog.textContent = `正在处理第 ${pageNum}/${totalPages} 页...`;
@@ -331,6 +413,12 @@
                 canvas.width = viewport.width;
                 canvas.height = viewport.height;
                 await page.render({ canvasContext: ctx, viewport }).promise;
+
+                // 保存整页原图（用于按原排版展示）
+                const pageImage = canvas.toDataURL('image/jpeg', 0.7);
+                const pageRec = { pageNum, image: pageImage, rows: 3, cols: 5 };
+                pages.push(pageRec);
+                await dbPutPage(pageRec);
 
                 const rows = 3, cols = 5;
                 const tileW = Math.floor(canvas.width / cols);
@@ -409,35 +497,81 @@
         }
 
         function render() {
-            const grid = document.getElementById('grid');
+            const pagesEl = document.getElementById('pages');
             const empty = document.getElementById('empty');
-            let list = [...tickets];
-            list.sort((a, b) => a.id - b.id);
-            if (showUnusedOnly) list = list.filter(t => !isUsed(t.id));
+            pagesEl.className = 'pages' + (showUnusedOnly ? ' only-unused' : '');
+            pagesEl.innerHTML = '';
 
-            grid.innerHTML = '';
-            if (list.length === 0) { empty.style.display = 'block'; return; }
+            // 没有整页图时（如旧备份），退化为单张网格
+            if (pages.length === 0) {
+                if (tickets.length === 0) { empty.style.display = 'block'; return; }
+                pagesEl.className = 'grid';
+                const firstUnused = tickets.find(t => !isUsed(t.id));
+                tickets.forEach(t => {
+                    const u = isUsed(t.id);
+                    const next = (firstUnused && firstUnused.id === t.id);
+                    const card = document.createElement('div');
+                    card.className = 'card ' + (u ? 'used' : 'unused') + (next ? ' next' : '');
+                    card.onclick = () => openModal(t.id);
+                    card.innerHTML = `
+                        <img src="${t.image}" alt="停车票#${t.id}">
+                        <div class="card-body">
+                            <div class="card-title">#${t.id} <span style="color:${u ? '#999' : 'var(--accent)'};font-size:12px">${u ? '已用' : '未用'}</span></div>
+                            <div class="card-pos">PDF 第${t.page}页 第${t.row}行 第${t.col}列</div>
+                            <div class="card-status" onclick="event.stopPropagation()">
+                                <input type="checkbox" ${u ? 'checked' : ''} onchange="setUsed(${t.id}, this.checked)">
+                                <span>${u ? '已使用' : '未使用'}</span>
+                            </div>
+                        </div>`;
+                    pagesEl.appendChild(card);
+                });
+                empty.style.display = 'none';
+                renderStats();
+                return;
+            }
+
             empty.style.display = 'none';
+            const firstUnused = tickets.find(t => !isUsed(t.id));
+            const usedOnPage = pn => tickets.filter(t => t.page === pn && isUsed(t.id)).length;
+            const totalOnPage = pn => tickets.filter(t => t.page === pn).length;
 
-            const firstUnused = list.find(t => !isUsed(t.id));
-            list.forEach(t => {
-                const u = isUsed(t.id);
-                const next = (firstUnused && firstUnused.id === t.id);
-                const card = document.createElement('div');
-                card.className = 'card ' + (u ? 'used' : 'unused') + (next ? ' next' : '');
-                card.onclick = () => openModal(t.id);
-                card.innerHTML = `
-                    <img src="${t.image}" alt="停车票#${t.id}">
-                    <div class="card-body">
-                        <div class="card-title">#${t.id} <span style="color:${u ? '#999' : 'var(--accent)'};font-size:12px">${u ? '已用' : '未用'}</span></div>
-                        <div class="card-pos">PDF 第${t.page}页 第${t.row}行 第${t.col}列</div>
-                        <div class="card-status" onclick="event.stopPropagation()">
-                            <input type="checkbox" ${u ? 'checked' : ''} onchange="setUsed(${t.id}, this.checked)">
-                            <span>${u ? '已使用' : '未使用'}</span>
-                        </div>
-                    </div>
-                `;
-                grid.appendChild(card);
+            pages.forEach(p => {
+                const section = document.createElement('div');
+                section.className = 'page-section';
+                section.dataset.page = p.pageNum;
+
+                const head = document.createElement('div');
+                head.className = 'page-head';
+                head.innerHTML = `<h3>第 ${p.pageNum} 页</h3><span class="page-used">已用 ${usedOnPage(p.pageNum)}/${totalOnPage(p.pageNum)}</span>`;
+                section.appendChild(head);
+
+                const wrap = document.createElement('div');
+                wrap.className = 'page-wrap';
+                const img = document.createElement('img');
+                img.className = 'page-img';
+                img.src = p.image;
+                wrap.appendChild(img);
+
+                const spots = document.createElement('div');
+                spots.className = 'hotspots';
+                tickets.filter(t => t.page === p.pageNum).forEach(t => {
+                    const cellW = 100 / p.cols;
+                    const cellH = 100 / p.rows;
+                    const spot = document.createElement('div');
+                    const u = isUsed(t.id);
+                    const next = (firstUnused && firstUnused.id === t.id);
+                    spot.className = 'hotspot ' + (u ? 'used' : 'unused') + (next ? ' next' : '');
+                    spot.style.left = ((t.col - 1) * cellW) + '%';
+                    spot.style.top = ((t.row - 1) * cellH) + '%';
+                    spot.style.width = cellW + '%';
+                    spot.style.height = cellH + '%';
+                    spot.onclick = () => openModal(t.id);
+                    spot.innerHTML = `<span class="no">#${t.id}</span>`;
+                    spots.appendChild(spot);
+                });
+                wrap.appendChild(spots);
+                section.appendChild(wrap);
+                pagesEl.appendChild(section);
             });
             renderStats();
         }
@@ -455,10 +589,14 @@
             if (tickets.length === 0) { toast('请先上传 PDF'); return; }
             const next = tickets.find(t => !isUsed(t.id));
             if (!next) { toast('没有未使用的票了'); return; }
-            const cards = document.querySelectorAll('.card');
-            const idx = [...cards].findIndex(c => c.querySelector('.card-title')?.textContent.includes('#' + next.id));
-            if (idx >= 0) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
-            else openModal(next.id);
+            render(); // 确保热点 .next 高亮已渲染
+            const section = document.querySelector(`.page-section[data-page="${next.page}"]`);
+            if (section) {
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                toast('第 ' + next.page + ' 页 · #' + next.id + ' 是下一张未用票');
+            } else {
+                openModal(next.id);
+            }
         }
 
         function toggleView() {
@@ -524,7 +662,7 @@
         // ===== 导出/导入 =====
         function exportData() {
             if (tickets.length === 0) { toast('没有数据可导出'); return; }
-            const data = JSON.stringify(tickets, null, 2);
+            const data = JSON.stringify({ tickets, pages }, null, 2);
             const blob = new Blob([data], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -540,10 +678,14 @@
             try {
                 const text = await file.text();
                 const data = JSON.parse(text);
-                if (!Array.isArray(data)) throw new Error('格式错误');
-                if (!confirm('将导入 ' + data.length + ' 张票的数据，会覆盖当前数据。是否继续？')) return;
+                const importedTickets = Array.isArray(data) ? data : (data.tickets || []);
+                const importedPages = Array.isArray(data) ? [] : (data.pages || []);
+                if (importedTickets.length === 0) throw new Error('没有可导入的票');
+                if (!confirm('将导入 ' + importedTickets.length + ' 张票的数据，会覆盖当前数据。是否继续？')) return;
                 await dbClear();
-                for (const t of data) {
+                await dbClearPages();
+                for (const p of importedPages) await dbPutPage(p);
+                for (const t of importedTickets) {
                     if (!t.used) t.used = false;
                     if (!t.usedAt) t.usedAt = null;
                     await dbPut(t);
