@@ -10,7 +10,7 @@
         :root { --bg: #f7f8fa; --card: #fff; --accent: #00b578; --accent-light: #e6f9f1; --danger: #ff4d4f; --warn: #fa8c16; --text: #333; --muted: #888; --border: #e0e0e0; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
-        header { background: var(--card); padding: 16px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 20; }
+        header { background: var(--card); padding: 14px 20px; border-bottom: 1px solid var(--border); }
         .header-inner { max-width: 1200px; margin: 0 auto; }
         h1 { font-size: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .badge { background: var(--accent); color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 12px; }
@@ -21,7 +21,7 @@
         .progress-fill { height: 100%; background: var(--accent); width: 0; transition: width 0.3s; }
         .stat-item { font-size: 14px; color: var(--muted); }
         .stat-item b { color: var(--text); }
-        .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+        /* 操作按钮已整合进下方 .toolbar */
         button, .file-label { border: none; padding: 8px 14px; border-radius: 6px; font-size: 14px; cursor: pointer; transition: opacity 0.2s; display: inline-block; }
         button:hover, .file-label:hover { opacity: 0.85; }
         .btn-primary { background: var(--accent); color: #fff; }
@@ -36,10 +36,11 @@
         .upload-area h2 { font-size: 18px; margin-bottom: 12px; }
         .upload-area p { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
         .progress-log { font-size: 13px; color: var(--muted); margin-top: 12px; min-height: 20px; }
-        .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-        .toolbar label { font-size: 14px; color: var(--muted); }
-        .toolbar select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; }
+        .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px auto; max-width: 1200px; padding: 12px 14px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+        .toolbar .divider { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
         .toolbar .spacer { flex: 1; }
+        .toolbar .txt { font-size: 14px; color: var(--muted); }
+        .toolbar select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; background: #fff; }
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
         .card { background: var(--card); border-radius: 10px; border: 2px solid transparent; overflow: hidden; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; position: relative; }
         .card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
@@ -72,7 +73,9 @@
             .stats { flex-direction: column; align-items: flex-start; }
             .progress-wrap { width: 100%; }
             button, .file-label { padding: 12px 14px; font-size: 14px; min-height: 44px; }
-            .actions { gap: 8px; }
+            .toolbar { padding: 10px; gap: 6px; margin: 12px auto; }
+            .toolbar .divider { display: none; }
+            .toolbar .spacer { display: none; }
             .card { -webkit-tap-highlight-color: transparent; }
             h1 { font-size: 17px; }
             .upload-area { padding: 28px 16px; }
@@ -95,31 +98,30 @@
                 <div class="stat-item">未用 <b id="unusedCount">0</b></div>
                 <div class="stat-item">合计 <b id="totalCount">0</b></div>
             </div>
-            <div class="actions">
-                <label class="file-label"><input type="file" id="pdfInput" accept="application/pdf">选择 PDF</label>
-                <button class="btn-primary" onclick="useNext()">标记下一张已用</button>
-                <button class="btn-secondary" onclick="scrollToNext()">跳到第一张未用</button>
-                <button class="btn-secondary" onclick="toggleView()">切换：未用/全部</button>
-                <button class="btn-warn" onclick="exportData()">导出备份</button>
-                <label class="file-label" style="background:#f0f0f0;color:#333"><input type="file" id="importInput" accept="application/json">导入备份</label>
-                <button class="btn-danger" onclick="clearAll()">清除全部</button>
-            </div>
         </div>
     </header>
     <main>
-        <div class="upload-area" id="dropZone">
-            <h2 id="uploadTitle">点击上方"选择 PDF"上传停车票文件</h2>
-            <p id="uploadDesc">自动识别切割成单张停车票，进度自动保存（关掉重开不丢失）。手机用户从微信或文件管理器选 PDF 即可。</p>
-            <div class="progress-log" id="progressLog">等待 PDF...首次识别约需几十秒，请耐心等待。</div>
-        </div>
-        <div class="toolbar" id="toolbar" style="display:none">
-            <label>排序：</label>
+        <div class="toolbar" id="toolbar">
+            <label class="file-label"><input type="file" id="pdfInput" accept="application/pdf">选择 PDF</label>
+            <button class="btn-primary" onclick="useNext()">标记下一张已用</button>
+            <button class="btn-secondary" onclick="scrollToNext()">跳到第一张未用</button>
+            <button class="btn-secondary" onclick="toggleView()">未用/全部</button>
+            <span class="divider"></span>
+            <span class="txt">排序</span>
             <select id="sortSelect" onchange="render()">
-                <option value="id">按编号顺序</option>
+                <option value="id">按编号</option>
                 <option value="page">按PDF页码</option>
             </select>
-            <div class="spacer"></div>
-            <button class="btn-secondary" onclick="markFirstN()">批量标记前N张已用</button>
+            <button class="btn-secondary" onclick="markFirstN()">批量标记前N张</button>
+            <span class="spacer"></span>
+            <button class="btn-secondary" onclick="exportData()">导出备份</button>
+            <label class="file-label" style="background:#f0f0f0;color:#333"><input type="file" id="importInput" accept="application/json">导入备份</label>
+            <button class="btn-danger" onclick="clearAll()">清除全部</button>
+        </div>
+        <div class="upload-area" id="dropZone">
+            <h2 id="uploadTitle">把停车票 PDF 拖到这里，或点上方"选择 PDF"</h2>
+            <p id="uploadDesc">自动识别切割成单张停车票，进度自动保存（关掉重开不丢失）。手机用户从微信或文件管理器选 PDF 即可。</p>
+            <div class="progress-log" id="progressLog">等待 PDF...首次识别约需几十秒，请耐心等待。</div>
         </div>
         <div id="grid" class="grid"></div>
         <div id="empty" class="empty" style="display:none">没有符合条件的停车票</div>
