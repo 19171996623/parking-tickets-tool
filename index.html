@@ -211,7 +211,7 @@
         </div>
         <div class="upload-area" id="dropZone">
             <h2 id="uploadTitle">把停车票 PDF 拖到这里，或点下方按钮</h2>
-            <p id="uploadDesc">自动识别切割成单张停车票，进度自动保存（关掉重开不丢失）。手机用户从微信或文件管理器选 PDF 即可。</p>
+            <p id="uploadDesc">自动识别切割成单张停车票，进度自动保存到本机浏览器（关掉重开不丢失）。<b>注意：数据只存在你这台手机/电脑的浏览器里</b>，清缓存、换浏览器、或在微信内打开都可能丢失，请识别完成后点【导出备份】存一份。</p>
             <label class="file-label" id="uploadBtnArea" style="display:none;font-size:18px;padding:16px 32px;margin-top:12px"><input type="file" id="pdfInputMobile" accept="application/pdf">📄 选择停车票 PDF</label>
             <div class="progress-log" id="progressLog">等待 PDF...首次识别约需几十秒，请耐心等待。</div>
         </div>
@@ -245,6 +245,23 @@
         const DB_VERSION = 1;
         const STORE = 'tickets';
         const LEGACY_LS_KEY = 'parking_tickets_used_v1'; // 旧版 localStorage 兼容
+        const LS_BACKUP = 'pt_backup_v2'; // 本地冗余备份（轻量：仅张数+已用编号，用于 IndexedDB 偶发丢失时兜底）
+
+        // localStorage 冗余：IndexedDB 不可用时（隐私模式/部分 webview）至少保住"已用到哪"
+        function saveBackup() {
+            try {
+                const usedIds = tickets.filter(t => t.used).map(t => t.id);
+                localStorage.setItem(LS_BACKUP, JSON.stringify({ total: tickets.length, usedIds: usedIds, ts: Date.now() }));
+            } catch (e) { /* localStorage 也可能不可用，忽略 */ }
+        }
+        function loadBackup() {
+            try {
+                const raw = localStorage.getItem(LS_BACKUP);
+                if (!raw) return null;
+                const o = JSON.parse(raw);
+                return (o && typeof o.total === 'number') ? o : null;
+            } catch (e) { return null; }
+        }
 
         function openDB() {
             return new Promise((resolve, reject) => {
@@ -319,6 +336,7 @@
         let pages = [];
         let currentId = null;
         let showUnusedOnly = false;
+        let pendingUsedIds = []; // IndexedDB 为空但 localStorage 有备份时，待重新识别后套用的已用编号
 
         // ===== UI 元素 =====
         const dropZone = document.getElementById('dropZone');
@@ -361,20 +379,34 @@
             }
         }
 
-        // ===== 初始化：先从 IndexedDB 读 =====
+        // ===== 初始化：先从 IndexedDB 读（失败则降级 + localStorage 兜底）=====
         async function init() {
-            const saved = await dbGetAll();
-            const savedPages = await dbGetPages();
-            pages = savedPages.sort((a, b) => a.pageNum - b.pageNum);
-            if (saved.length > 0) {
-                tickets = saved.sort((a, b) => a.id - b.id);
-                used = {};
-                tickets.forEach(t => { if (t.used) used[t.id] = true; });
-                updateDataState(true);
-                document.getElementById('savedTag').style.display = 'inline-block';
-                render();
-                renderStats();
-                progressLog.textContent = '已加载 ' + tickets.length + ' 张停车票 · 已自动保存';
+            try {
+                const saved = await dbGetAll();
+                const savedPages = await dbGetPages();
+                pages = savedPages.sort((a, b) => a.pageNum - b.pageNum);
+                if (saved.length > 0) {
+                    tickets = saved.sort((a, b) => a.id - b.id);
+                    used = {};
+                    tickets.forEach(t => { if (t.used) used[t.id] = true; });
+                    updateDataState(true);
+                    document.getElementById('savedTag').style.display = 'inline-block';
+                    render();
+                    renderStats();
+                    progressLog.textContent = '已加载 ' + tickets.length + ' 张停车票 · 已自动保存';
+                    return;
+                }
+            } catch (e) {
+                // IndexedDB 读取失败（隐私模式/部分 webview 禁用本地存储）
+                console.error('IndexedDB 读取失败：', e);
+            }
+            // IndexedDB 为空或不可用：尝试 localStorage 冗余备份
+            const backup = loadBackup();
+            if (backup && backup.total > 0) {
+                pendingUsedIds = Array.isArray(backup.usedIds) ? backup.usedIds : [];
+                updateDataState(false);
+                document.getElementById('savedTag').style.display = 'none';
+                progressLog.textContent = '检测到本机备份的使用进度（已用 ' + pendingUsedIds.length + ' 张），但票图已丢失。请重新选择 PDF 恢复票图，已用记录会自动套用。';
             } else {
                 document.getElementById('savedTag').style.display = 'none';
                 updateDataState(false);
@@ -449,13 +481,23 @@
                     if (oldUsed[t.url]) { t.used = true; t.usedAt = t.usedAt || new Date().toISOString(); used[t.id] = true; await dbPut(t); restored++; }
                 }
 
+                // 若此前有 localStorage 冗余备份的已用进度，套用到新识别结果
+                if (pendingUsedIds.length) {
+                    for (const t of tickets) {
+                        if (pendingUsedIds.includes(t.id)) { t.used = true; t.usedAt = t.usedAt || new Date().toISOString(); used[t.id] = true; await dbPut(t); }
+                    }
+                    restored += pendingUsedIds.filter(id => tickets.some(tt => tt.id === id)).length;
+                    pendingUsedIds = [];
+                }
+
                 progressLog.textContent = `识别完成，共 ${tickets.length} 张（每页约 ${grid.cols} 列、${grid.rows} 行）。已自动保存。` + (restored ? ` 已恢复 ${restored} 张使用记录。` : '');
                 updateDataState(true);
                 document.getElementById('savedTag').style.display = 'inline-block';
                 document.getElementById('uploadTitle').textContent = '已加载 ' + tickets.length + ' 张停车票';
-                document.getElementById('uploadDesc').textContent = '数据已自动保存，关掉重开不丢失。如需换 PDF，直接选择新文件即可。';
+                document.getElementById('uploadDesc').textContent = '数据已自动保存到本机浏览器。建议点上方【导出备份】存一份，并尽量用 Safari/Chrome 打开本页，避免丢失。';
+                saveBackup();
                 render(); renderStats();
-                toast('识别完成，已自动保存');
+                toast('识别完成，已自动保存（建议导出备份）');
             } catch (err) {
                 console.error(err);
                 progressLog.textContent = '识别出错：' + (err && err.message ? err.message : err);
@@ -505,7 +547,8 @@
             if (t) {
                 t.used = checked;
                 t.usedAt = checked ? new Date().toISOString() : null;
-                await dbPut(t);
+                try { await dbPut(t); } catch (e) { console.error('dbPut 失败', e); }
+                saveBackup(); // 同步一份轻量备份到 localStorage
             }
             renderStats();
             render();
@@ -604,7 +647,8 @@
             await dbClear();
             tickets = [];
             used = {};
-            localStorage.removeItem(LEGACY_LS_KEY);
+            pendingUsedIds = [];
+            try { localStorage.removeItem(LEGACY_LS_KEY); localStorage.removeItem(LS_BACKUP); } catch (e) {}
             location.reload();
         }
 
